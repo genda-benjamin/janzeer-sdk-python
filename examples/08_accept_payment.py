@@ -41,31 +41,31 @@ async def main() -> None:
 
     async with await JanzeerRpcWs.connect(WS) as ws, AsyncJanzeerClient(NODE) as client:
         sub = await ws.subscribe_address_activity([to], on_event)
-        network_id = (await client.info())["networkId"]
-        tx = me.sign_tx(
-            TxBuilder.transfer(
-                sender=me.address,
-                to=to,
-                amount=invoice_amount,
-                nonce=await client.nonce(me.address),
-                data=reference,
-                network_id=network_id,
-            )
-        )
-        await client.submit(tx)
         try:
-            ev = await asyncio.wait_for(matched, TIMEOUT)
-        except TimeoutError:
+            network_id = (await client.info())["networkId"]
+            tx = me.sign_tx(
+                TxBuilder.transfer(
+                    sender=me.address,
+                    to=to,
+                    amount=invoice_amount,
+                    nonce=await client.nonce(me.address),
+                    data=reference,
+                    network_id=network_id,
+                )
+            )
+            await client.submit(tx)
+            try:
+                ev = await asyncio.wait_for(matched, TIMEOUT)
+            except asyncio.TimeoutError:
+                print(f"no matching payment for {reference} within {TIMEOUT}s", file=sys.stderr)
+                raise SystemExit(1) from None
+            final = await await_finality(client, ev["transaction"]["hash"], timeout=float(TIMEOUT))
+            if final.get("status") != "FINAL":
+                print(f"payment not final: {final.get('status')}", file=sys.stderr)
+                raise SystemExit(1)
+            print(f"paid: {reference} {invoice_amount} JNZ in block {final.get('blockHeight')}")
+        finally:
             await sub.unsubscribe()
-            print(f"no matching payment for {reference} within {TIMEOUT}s", file=sys.stderr)
-            raise SystemExit(1) from None
-        final = await await_finality(client, ev["transaction"]["hash"], timeout=float(TIMEOUT))
-        if final.get("status") != "FINAL":
-            await sub.unsubscribe()
-            print(f"payment not final: {final.get('status')}", file=sys.stderr)
-            raise SystemExit(1) from None
-        print(f"paid: {reference} {invoice_amount} JNZ in block {final.get('blockHeight')}")
-        await sub.unsubscribe()
 
 
 asyncio.run(main())
